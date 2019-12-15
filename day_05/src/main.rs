@@ -4,7 +4,6 @@ use std::io::Read;
 use intcode::Intcode;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let input = [1];
     let mut output = Vec::new();
     let mut code: Vec<i64> = {
         let mut file = File::open(env::args().nth(1).unwrap())?;
@@ -16,6 +15,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(Result::unwrap)
             .collect()
     };
+    let input = [env::args().nth(2).unwrap().parse()?];
     code.as_mut_slice().run(&input, &mut output)?;
     dbg!(output);
     Ok(())
