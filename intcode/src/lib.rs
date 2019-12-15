@@ -29,6 +29,10 @@ pub enum Operator {
     Mul,
     In,
     Out,
+    JumpIfTrue,
+    JumpIfFalse,
+    LessThan,
+    Equals,
     Break
 }
 
@@ -41,6 +45,10 @@ impl TryFrom<i64> for Operator {
             2 => Ok(Operator::Mul),
             3 => Ok(Operator::In),
             4 => Ok(Operator::Out),
+            5 => Ok(Operator::JumpIfTrue),
+            6 => Ok(Operator::JumpIfFalse),
+            7 => Ok(Operator::LessThan),
+            8 => Ok(Operator::Equals),
             99 => Ok(Operator::Break),
             _ => Err(Error::UnknownOpcode(code))
         }
@@ -86,10 +94,13 @@ pub struct Instruction {
 
 impl Instruction {
     pub(crate) fn increment(&self) -> usize {
+        use Operator::*;
+
         match self.op {
-            Operator::Add | Operator::Mul => 4,
-            Operator::In | Operator::Out => 2,
-            Operator::Break => 1
+            Add | Mul | LessThan | Equals => 4,
+            In | Out => 2,
+            JumpIfTrue | JumpIfFalse => 3,
+            Break => 1
         }
     }
 }
@@ -137,7 +148,7 @@ impl Intcode for &mut [i64] {
                     };
                     let dest = match inst.m3 {
                         Mode::Position => self[pos + 3] as usize,
-                        Mode::Immediate => Err(Error::UnexpectedMode(inst.m3))?
+                        Mode::Immediate => pos + 3 as usize
                     };
                     match inst.op {
                         Op::Add => self[dest] = op1 + op2,
@@ -158,6 +169,64 @@ impl Intcode for &mut [i64] {
                         Mode::Immediate => pos + 1
                     };
                     output.push(self[dest]);
+                }
+                Op::JumpIfTrue => {
+                    let op1 = match inst.m1 {
+                        Mode::Position => self[self[pos + 1] as usize],
+                        Mode::Immediate => self[pos + 1]
+                    };
+                    let op2 = match inst.m2 {
+                        Mode::Position => self[self[pos + 2] as usize],
+                        Mode::Immediate => self[pos + 2]
+                    };
+                    if op1 != 0 {
+                        pos = op2 as usize;
+                        continue;
+                    }
+                }
+                Op::JumpIfFalse => {
+                    let op1 = match inst.m1 {
+                        Mode::Position => self[self[pos + 1] as usize],
+                        Mode::Immediate => self[pos + 1]
+                    };
+                    let op2 = match inst.m2 {
+                        Mode::Position => self[self[pos + 2] as usize],
+                        Mode::Immediate => self[pos + 2]
+                    };
+                    if op1 == 0 {
+                        pos = op2 as usize;
+                        continue;
+                    }
+                }
+                Op::LessThan => {
+                    let op1 = match inst.m1 {
+                        Mode::Position => self[self[pos + 1] as usize],
+                        Mode::Immediate => self[pos + 1]
+                    };
+                    let op2 = match inst.m2 {
+                        Mode::Position => self[self[pos + 2] as usize],
+                        Mode::Immediate => self[pos + 2]
+                    };
+                    let dest = match inst.m3 {
+                        Mode::Position => self[pos + 3] as usize,
+                        Mode::Immediate => pos + 3 as usize
+                    };
+                    self[dest] = if op1 < op2 { 1 } else { 0 }
+                }
+                Op::Equals => {
+                    let op1 = match inst.m1 {
+                        Mode::Position => self[self[pos + 1] as usize],
+                        Mode::Immediate => self[pos + 1]
+                    };
+                    let op2 = match inst.m2 {
+                        Mode::Position => self[self[pos + 2] as usize],
+                        Mode::Immediate => self[pos + 2]
+                    };
+                    let dest = match inst.m3 {
+                        Mode::Position => self[pos + 3] as usize,
+                        Mode::Immediate => pos + 3 as usize
+                    };
+                    self[dest] = if op1 == op2 { 1 } else { 0 }
                 }
                 Op::Break => {
                     break;
@@ -216,5 +285,89 @@ mod test {
         let mut output = Vec::new();
         code.as_mut_slice().run(&input, &mut output).unwrap();
         assert_eq!(output, [11]);
+    }
+
+    #[test]
+    fn test_eq_8_pos() {
+        let mut code = vec![3,9,8,9,10,9,4,9,99,-1,8];
+        let mut input = [8];
+        let mut output = Vec::new();
+        code.as_mut_slice().run(&input, &mut output).unwrap();
+        assert_eq!(output, [1]);
+        output.clear();
+        input[0] = 7;
+        code.as_mut_slice().run(&input, &mut output).unwrap();
+        assert_eq!(output, [0]);
+    }
+
+    #[test]
+    fn test_lt_8_pos() {
+        let mut code = vec![3,9,7,9,10,9,4,9,99,-1,8];
+        let mut input = [7];
+        let mut output = Vec::new();
+        code.as_mut_slice().run(&input, &mut output).unwrap();
+        assert_eq!(output, [1]);
+        code = vec![3,9,7,9,10,9,4,9,99,-1,8];
+        output.clear();
+        input[0] = 8;
+        code.as_mut_slice().run(&input, &mut output).unwrap();
+        assert_eq!(output, [0]);
+    }
+
+    #[test]
+    fn test_eq_8_immediate() {
+        let mut code = vec![3,3,1108,-1,8,3,4,3,99];
+        let mut input = [8];
+        let mut output = Vec::new();
+        code.as_mut_slice().run(&input, &mut output).unwrap();
+        assert_eq!(output, [1]);
+        code = vec![3,3,1108,-1,8,3,4,3,99];
+        output.clear();
+        input[0] = 7;
+        code.as_mut_slice().run(&input, &mut output).unwrap();
+        assert_eq!(output, [0]);
+    }
+
+    #[test]
+    fn test_lt_8_immediate() {
+        let mut code = vec![3,3,1107,-1,8,3,4,3,99];
+        let mut input = [7];
+        let mut output = Vec::new();
+        code.as_mut_slice().run(&input, &mut output).unwrap();
+        assert_eq!(output, [1]);
+        code = vec![3,3,1107,-1,8,3,4,3,99];
+        output.clear();
+        input[0] = 8;
+        code.as_mut_slice().run(&input, &mut output).unwrap();
+        assert_eq!(output, [0]);
+    }
+
+    #[test]
+    fn test_jump_pos() {
+        let mut code = vec![3,12,6,12,15,1,13,14,13,4,13,99,-1,0,1,9];
+        let mut input = [0];
+        let mut output = Vec::new();
+        code.as_mut_slice().run(&input, &mut output).unwrap();
+        assert_eq!(output, [0]);
+        code = vec![3,12,6,12,15,1,13,14,13,4,13,99,-1,0,1,9];
+        output.clear();
+        input[0] = 1;
+        code.as_mut_slice().run(&input, &mut output).unwrap();
+        assert_eq!(output, [1]);
+    }
+
+    #[test]
+    fn test_jump_imm() {
+        let mut code = vec![3,3,1105,-1,9,1101,0,0,12,4,12,99,1];
+        let mut input = [0];
+        let mut output = Vec::new();
+        code.as_mut_slice().run(&input, &mut output).unwrap();
+        assert_eq!(output, [0]);
+
+        code = vec![3,3,1105,-1,9,1101,0,0,12,4,12,99,1];
+        output.clear();
+        input[0] = 1;
+        code.as_mut_slice().run(&input, &mut output).unwrap();
+        assert_eq!(output, [1]);
     }
 }
