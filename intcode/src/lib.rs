@@ -123,117 +123,157 @@ impl TryFrom<i64> for Instruction {
     }
 }
 
+#[derive(Debug)]
+pub struct Program {
+    pos: usize,
+    done: bool,
+    code: Vec<i64>
+}
+
+impl Program {
+    pub fn new(code: &[i64]) -> Program {
+        Program {
+            pos: 0,
+            code: code.to_vec(),
+            done: false
+        }
+    }
+
+    pub fn is_done(&self) -> bool {
+        self.done
+    }
+
+    fn get_code(&self) -> &[i64] {
+        &self.code
+    }
+
+    pub fn run_partial<'a>(&mut self, input_iter: &mut impl FnMut() -> i64) -> Result<Option<i64>, Error> {
+        use Operator as Op;
+        use ParamMode as Mode;
+
+        loop {
+            let inst = Instruction::try_from(self.code[self.pos])?;
+            match inst.op {
+                Op::Add | Op::Mul => {
+                    let op1 = match inst.m1 {
+                        Mode::Position => self.code[self.code[self.pos + 1] as usize],
+                        Mode::Immediate => self.code[self.pos + 1]
+                    };
+                    let op2 = match inst.m2 {
+                        Mode::Position => self.code[self.code[self.pos + 2] as usize],
+                        Mode::Immediate => self.code[self.pos + 2]
+                    };
+                    let dest = match inst.m3 {
+                        Mode::Position => self.code[self.pos + 3] as usize,
+                        Mode::Immediate => self.pos + 3 as usize
+                    };
+                    match inst.op {
+                        Op::Add => self.code[dest] = op1 + op2,
+                        Op::Mul => self.code[dest] = op1 * op2,
+                        _ => panic!("How did this happen?")
+                    };
+                }
+                Op::In => {
+                    let dest = match inst.m1 {
+                        Mode::Position => self.code[self.pos + 1] as usize,
+                        Mode::Immediate => self.pos + 1
+                    };
+                    self.code[dest] = input_iter();
+                }
+                Op::Out => {
+                    let dest = match inst.m1 {
+                        Mode::Position => self.code[self.pos + 1] as usize,
+                        Mode::Immediate => self.pos + 1
+                    };
+                    self.pos += inst.increment();
+                    return Ok(Some(self.code[dest]));
+                }
+                Op::JumpIfTrue => {
+                    let op1 = match inst.m1 {
+                        Mode::Position => self.code[self.code[self.pos + 1] as usize],
+                        Mode::Immediate => self.code[self.pos + 1]
+                    };
+                    let op2 = match inst.m2 {
+                        Mode::Position => self.code[self.code[self.pos + 2] as usize],
+                        Mode::Immediate => self.code[self.pos + 2]
+                    };
+                    if op1 != 0 {
+                        self.pos = op2 as usize;
+                        continue;
+                    }
+                }
+                Op::JumpIfFalse => {
+                    let op1 = match inst.m1 {
+                        Mode::Position => self.code[self.code[self.pos + 1] as usize],
+                        Mode::Immediate => self.code[self.pos + 1]
+                    };
+                    let op2 = match inst.m2 {
+                        Mode::Position => self.code[self.code[self.pos + 2] as usize],
+                        Mode::Immediate => self.code[self.pos + 2]
+                    };
+                    if op1 == 0 {
+                        self.pos = op2 as usize;
+                        continue;
+                    }
+                }
+                Op::LessThan => {
+                    let op1 = match inst.m1 {
+                        Mode::Position => self.code[self.code[self.pos + 1] as usize],
+                        Mode::Immediate => self.code[self.pos + 1]
+                    };
+                    let op2 = match inst.m2 {
+                        Mode::Position => self.code[self.code[self.pos + 2] as usize],
+                        Mode::Immediate => self.code[self.pos + 2]
+                    };
+                    let dest = match inst.m3 {
+                        Mode::Position => self.code[self.pos + 3] as usize,
+                        Mode::Immediate => self.pos + 3 as usize
+                    };
+                    self.code[dest] = if op1 < op2 { 1 } else { 0 }
+                }
+                Op::Equals => {
+                    let op1 = match inst.m1 {
+                        Mode::Position => self.code[self.code[self.pos + 1] as usize],
+                        Mode::Immediate => self.code[self.pos + 1]
+                    };
+                    let op2 = match inst.m2 {
+                        Mode::Position => self.code[self.code[self.pos + 2] as usize],
+                        Mode::Immediate => self.code[self.pos + 2]
+                    };
+                    let dest = match inst.m3 {
+                        Mode::Position => self.code[self.pos + 3] as usize,
+                        Mode::Immediate => self.pos + 3 as usize
+                    };
+                    self.code[dest] = if op1 == op2 { 1 } else { 0 }
+                }
+                Op::Break => {
+                    break;
+                }
+            };
+            self.pos += inst.increment();
+        }
+        self.done = true;
+        Ok(None)
+    }
+}
+
 pub trait Intcode {
     fn run(&mut self, input: &[i64], output: &mut Vec<i64>) -> Result<(), Error>;
 }
 
 impl Intcode for &mut [i64] {
     fn run(&mut self, input: &[i64], output: &mut Vec<i64>) -> Result<(), Error> {
-        use Operator as Op;
-        use ParamMode as Mode;
-
         let mut input_iter = input.iter();
-        let mut pos = 0;
-        loop {
-            let inst = Instruction::try_from(self[pos])?;
-            match inst.op {
-                Op::Add | Op::Mul => {
-                    let op1 = match inst.m1 {
-                        Mode::Position => self[self[pos + 1] as usize],
-                        Mode::Immediate => self[pos + 1]
-                    };
-                    let op2 = match inst.m2 {
-                        Mode::Position => self[self[pos + 2] as usize],
-                        Mode::Immediate => self[pos + 2]
-                    };
-                    let dest = match inst.m3 {
-                        Mode::Position => self[pos + 3] as usize,
-                        Mode::Immediate => pos + 3 as usize
-                    };
-                    match inst.op {
-                        Op::Add => self[dest] = op1 + op2,
-                        Op::Mul => self[dest] = op1 * op2,
-                        _ => panic!("How did this happen?")
-                    };
-                }
-                Op::In => {
-                    let dest = match inst.m1 {
-                        Mode::Position => self[pos + 1] as usize,
-                        Mode::Immediate => pos + 1
-                    };
-                    self[dest] = *input_iter.next().unwrap();
-                }
-                Op::Out => {
-                    let dest = match inst.m1 {
-                        Mode::Position => self[pos + 1] as usize,
-                        Mode::Immediate => pos + 1
-                    };
-                    output.push(self[dest]);
-                }
-                Op::JumpIfTrue => {
-                    let op1 = match inst.m1 {
-                        Mode::Position => self[self[pos + 1] as usize],
-                        Mode::Immediate => self[pos + 1]
-                    };
-                    let op2 = match inst.m2 {
-                        Mode::Position => self[self[pos + 2] as usize],
-                        Mode::Immediate => self[pos + 2]
-                    };
-                    if op1 != 0 {
-                        pos = op2 as usize;
-                        continue;
-                    }
-                }
-                Op::JumpIfFalse => {
-                    let op1 = match inst.m1 {
-                        Mode::Position => self[self[pos + 1] as usize],
-                        Mode::Immediate => self[pos + 1]
-                    };
-                    let op2 = match inst.m2 {
-                        Mode::Position => self[self[pos + 2] as usize],
-                        Mode::Immediate => self[pos + 2]
-                    };
-                    if op1 == 0 {
-                        pos = op2 as usize;
-                        continue;
-                    }
-                }
-                Op::LessThan => {
-                    let op1 = match inst.m1 {
-                        Mode::Position => self[self[pos + 1] as usize],
-                        Mode::Immediate => self[pos + 1]
-                    };
-                    let op2 = match inst.m2 {
-                        Mode::Position => self[self[pos + 2] as usize],
-                        Mode::Immediate => self[pos + 2]
-                    };
-                    let dest = match inst.m3 {
-                        Mode::Position => self[pos + 3] as usize,
-                        Mode::Immediate => pos + 3 as usize
-                    };
-                    self[dest] = if op1 < op2 { 1 } else { 0 }
-                }
-                Op::Equals => {
-                    let op1 = match inst.m1 {
-                        Mode::Position => self[self[pos + 1] as usize],
-                        Mode::Immediate => self[pos + 1]
-                    };
-                    let op2 = match inst.m2 {
-                        Mode::Position => self[self[pos + 2] as usize],
-                        Mode::Immediate => self[pos + 2]
-                    };
-                    let dest = match inst.m3 {
-                        Mode::Position => self[pos + 3] as usize,
-                        Mode::Immediate => pos + 3 as usize
-                    };
-                    self[dest] = if op1 == op2 { 1 } else { 0 }
-                }
-                Op::Break => {
-                    break;
-                }
-            };
-            pos += inst.increment();
+        let mut func = move || {
+            *input_iter.next().unwrap()
+        };
+        let mut prog = Program::new(self);
+        while !prog.is_done() {
+            if let Some(res) = prog.run_partial(&mut func)? {
+                output.push(res);
+            }
         }
+        self[..].clone_from_slice(prog.get_code());
         Ok(())
     }
 }
