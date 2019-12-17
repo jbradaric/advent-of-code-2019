@@ -33,6 +33,7 @@ pub enum Operator {
     JumpIfFalse,
     LessThan,
     Equals,
+    AdjRelBase,
     Break
 }
 
@@ -49,6 +50,7 @@ impl TryFrom<i64> for Operator {
             6 => Ok(Operator::JumpIfFalse),
             7 => Ok(Operator::LessThan),
             8 => Ok(Operator::Equals),
+            9 => Ok(Operator::AdjRelBase),
             99 => Ok(Operator::Break),
             _ => Err(Error::UnknownOpcode(code))
         }
@@ -58,7 +60,8 @@ impl TryFrom<i64> for Operator {
 #[derive(Clone, Copy, Debug)]
 pub enum ParamMode {
     Position,
-    Immediate
+    Immediate,
+    Relative
 }
 
 impl TryFrom<u32> for ParamMode {
@@ -68,6 +71,7 @@ impl TryFrom<u32> for ParamMode {
         match mode {
             0 => Ok(ParamMode::Position),
             1 => Ok(ParamMode::Immediate),
+            2 => Ok(ParamMode::Relative),
             _ => Err(Error::UnknownMode(mode))
         }
     }
@@ -100,6 +104,7 @@ impl Instruction {
             Add | Mul | LessThan | Equals => 4,
             In | Out => 2,
             JumpIfTrue | JumpIfFalse => 3,
+            AdjRelBase => 2,
             Break => 1
         }
     }
@@ -126,6 +131,7 @@ impl TryFrom<i64> for Instruction {
 #[derive(Debug)]
 pub struct Program {
     pos: usize,
+    rel_base: i64,
     done: bool,
     code: Vec<i64>
 }
@@ -134,6 +140,7 @@ impl Program {
     pub fn new(code: &[i64]) -> Program {
         Program {
             pos: 0,
+            rel_base: 0,
             code: code.to_vec(),
             done: false
         }
@@ -147,26 +154,33 @@ impl Program {
         &self.code
     }
 
+    fn get_param_value(&mut self, mode: ParamMode, pos: usize) -> i64 {
+        let addr = self.get_dest_addr(mode, pos);
+        self.code[addr]
+    }
+
+    fn get_dest_addr(&mut self, mode: ParamMode, pos: usize) -> usize {
+        let addr = match mode {
+            ParamMode::Position => self.code[pos] as usize,
+            ParamMode::Immediate => pos,
+            ParamMode::Relative => (self.code[pos] + self.rel_base) as usize
+        };
+        if addr >= self.code.len() {
+            self.code.resize(addr + 1, 0);
+        }
+        addr
+    }
+
     pub fn run_partial<'a>(&mut self, input_iter: &mut impl FnMut() -> i64) -> Result<Option<i64>, Error> {
         use Operator as Op;
-        use ParamMode as Mode;
 
         loop {
             let inst = Instruction::try_from(self.code[self.pos])?;
             match inst.op {
                 Op::Add | Op::Mul => {
-                    let op1 = match inst.m1 {
-                        Mode::Position => self.code[self.code[self.pos + 1] as usize],
-                        Mode::Immediate => self.code[self.pos + 1]
-                    };
-                    let op2 = match inst.m2 {
-                        Mode::Position => self.code[self.code[self.pos + 2] as usize],
-                        Mode::Immediate => self.code[self.pos + 2]
-                    };
-                    let dest = match inst.m3 {
-                        Mode::Position => self.code[self.pos + 3] as usize,
-                        Mode::Immediate => self.pos + 3 as usize
-                    };
+                    let op1 = self.get_param_value(inst.m1, self.pos + 1);
+                    let op2 = self.get_param_value(inst.m2, self.pos + 2);
+                    let dest = self.get_dest_addr(inst.m3, self.pos + 3);
                     match inst.op {
                         Op::Add => self.code[dest] = op1 + op2,
                         Op::Mul => self.code[dest] = op1 * op2,
@@ -174,80 +188,47 @@ impl Program {
                     };
                 }
                 Op::In => {
-                    let dest = match inst.m1 {
-                        Mode::Position => self.code[self.pos + 1] as usize,
-                        Mode::Immediate => self.pos + 1
-                    };
+                    let dest = self.get_dest_addr(inst.m1, self.pos + 1);
                     self.code[dest] = input_iter();
                 }
                 Op::Out => {
-                    let dest = match inst.m1 {
-                        Mode::Position => self.code[self.pos + 1] as usize,
-                        Mode::Immediate => self.pos + 1
-                    };
+                    let dest = self.get_dest_addr(inst.m1, self.pos + 1);
                     self.pos += inst.increment();
                     return Ok(Some(self.code[dest]));
                 }
                 Op::JumpIfTrue => {
-                    let op1 = match inst.m1 {
-                        Mode::Position => self.code[self.code[self.pos + 1] as usize],
-                        Mode::Immediate => self.code[self.pos + 1]
-                    };
-                    let op2 = match inst.m2 {
-                        Mode::Position => self.code[self.code[self.pos + 2] as usize],
-                        Mode::Immediate => self.code[self.pos + 2]
-                    };
+                    let op1 = self.get_param_value(inst.m1, self.pos + 1);
+                    let op2 = self.get_param_value(inst.m2, self.pos + 2);
                     if op1 != 0 {
                         self.pos = op2 as usize;
                         continue;
                     }
                 }
                 Op::JumpIfFalse => {
-                    let op1 = match inst.m1 {
-                        Mode::Position => self.code[self.code[self.pos + 1] as usize],
-                        Mode::Immediate => self.code[self.pos + 1]
-                    };
-                    let op2 = match inst.m2 {
-                        Mode::Position => self.code[self.code[self.pos + 2] as usize],
-                        Mode::Immediate => self.code[self.pos + 2]
-                    };
+                    let op1 = self.get_param_value(inst.m1, self.pos + 1);
+                    let op2 = self.get_param_value(inst.m2, self.pos + 2);
                     if op1 == 0 {
                         self.pos = op2 as usize;
                         continue;
                     }
                 }
                 Op::LessThan => {
-                    let op1 = match inst.m1 {
-                        Mode::Position => self.code[self.code[self.pos + 1] as usize],
-                        Mode::Immediate => self.code[self.pos + 1]
-                    };
-                    let op2 = match inst.m2 {
-                        Mode::Position => self.code[self.code[self.pos + 2] as usize],
-                        Mode::Immediate => self.code[self.pos + 2]
-                    };
-                    let dest = match inst.m3 {
-                        Mode::Position => self.code[self.pos + 3] as usize,
-                        Mode::Immediate => self.pos + 3 as usize
-                    };
+                    let op1 = self.get_param_value(inst.m1, self.pos + 1);
+                    let op2 = self.get_param_value(inst.m2, self.pos + 2);
+                    let dest = self.get_dest_addr(inst.m3, self.pos + 3);
                     self.code[dest] = if op1 < op2 { 1 } else { 0 }
                 }
                 Op::Equals => {
-                    let op1 = match inst.m1 {
-                        Mode::Position => self.code[self.code[self.pos + 1] as usize],
-                        Mode::Immediate => self.code[self.pos + 1]
-                    };
-                    let op2 = match inst.m2 {
-                        Mode::Position => self.code[self.code[self.pos + 2] as usize],
-                        Mode::Immediate => self.code[self.pos + 2]
-                    };
-                    let dest = match inst.m3 {
-                        Mode::Position => self.code[self.pos + 3] as usize,
-                        Mode::Immediate => self.pos + 3 as usize
-                    };
+                    let op1 = self.get_param_value(inst.m1, self.pos + 1);
+                    let op2 = self.get_param_value(inst.m2, self.pos + 2);
+                    let dest = self.get_dest_addr(inst.m3, self.pos + 3);
                     self.code[dest] = if op1 == op2 { 1 } else { 0 }
                 }
                 Op::Break => {
                     break;
+                }
+                Op::AdjRelBase => {
+                    self.rel_base += self.get_param_value(inst.m1, self.pos + 1);
                 }
             };
             self.pos += inst.increment();
@@ -273,7 +254,26 @@ impl Intcode for &mut [i64] {
                 output.push(res);
             }
         }
-        self[..].clone_from_slice(prog.get_code());
+        let l = self.len();
+        self[..].clone_from_slice(&prog.get_code()[..l]);
+        Ok(())
+    }
+}
+
+impl Intcode for Vec<i64> {
+    fn run(&mut self, input: &[i64], output: &mut Vec<i64>) -> Result<(), Error> {
+        let mut input_iter = input.iter();
+        let mut func = move || {
+            *input_iter.next().unwrap()
+        };
+        let mut prog = Program::new(self);
+        while !prog.is_done() {
+            if let Some(res) = prog.run_partial(&mut func)? {
+                output.push(res);
+            }
+        }
+        self.clear();
+        self.extend(prog.get_code().iter());
         Ok(())
     }
 }
@@ -409,5 +409,32 @@ mod test {
         input[0] = 1;
         code.as_mut_slice().run(&input, &mut output).unwrap();
         assert_eq!(output, [1]);
+    }
+
+    #[test]
+    fn test_relative_1() {
+        let mut code = vec![109,1,204,-1,1001,100,1,100,1008,100,16,101,1006,101,0,99];
+        let input = [];
+        let mut output = Vec::new();
+        code.run(&input, &mut output).unwrap();
+        assert_eq!(output, vec![109,1,204,-1,1001,100,1,100,1008,100,16,101,1006,101,0,99]);
+    }
+
+    #[test]
+    fn test_relative_2() {
+        let mut code = vec![1102,34915192,34915192,7,4,7,99,0];
+        let input = [];
+        let mut output = Vec::new();
+        code.run(&input, &mut output).unwrap();
+        assert_eq!(output[0].to_string().len(), 16);
+    }
+
+    #[test]
+    fn test_relative_3() {
+        let mut code = vec![104,1125899906842624,99];
+        let input = [];
+        let mut output = Vec::new();
+        code.run(&input, &mut output).unwrap();
+        assert_eq!(output[0], 1125899906842624);
     }
 }
