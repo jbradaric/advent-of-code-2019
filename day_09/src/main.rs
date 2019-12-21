@@ -16,11 +16,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(Result::unwrap)
             .collect()
     };
-    code.clone().run(&[1], &mut output)?;
+    code.clone().run(&[1], &mut |r| output.push(r))?;
     println!("Part 1: {}", output[0]);
 
     output.clear();
-    code.run(&[2], &mut output)?;
+    code.run(&[2], &mut |r| output.push(r))?;
     println!("Part 2: {}", output[0]);
     Ok(())
 }

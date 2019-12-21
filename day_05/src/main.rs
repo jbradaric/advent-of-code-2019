@@ -16,7 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .collect()
     };
     let input = [env::args().nth(2).unwrap().parse()?];
-    code.as_mut_slice().run(&input, &mut output)?;
+    code.as_mut_slice().run(&input, &mut |r| output.push(r))?;
     dbg!(output);
     Ok(())
 }
