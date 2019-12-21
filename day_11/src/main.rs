@@ -66,6 +66,24 @@ fn paint(mut program: Program, start_color: i64) -> Result<HashMap<(i64, i64), i
     Ok(painted)
 }
 
+fn print_registration(colors: &HashMap<(i64, i64), i64>) {
+    let x1 = *colors.keys().map(|(x, _)| x).min().unwrap();
+    let x2 = *colors.keys().map(|(x, _)| x).max().unwrap();
+    let y1 = *colors.keys().map(|(_, y)| y).min().unwrap();
+    let y2 = *colors.keys().map(|(_, y)| y).max().unwrap();
+    for x in x1..=x2 {
+        for y in y1..=y2 {
+            let color = colors.get(&(x, y)).unwrap_or(&0);
+            if color == &1 {
+                print!("#");
+            } else {
+                print!(" ");
+            }
+        }
+        print!("\n");
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let code: Vec<i64> = {
         let mut file = File::open(env::args().nth(1).unwrap())?;
@@ -78,6 +96,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .collect()
     };
     println!("Num painted: {}", paint(Program::new(&code), 0)?.len());
+
+    let painted = paint(Program::new(&code), 1)?;
+    print_registration(&painted);
 
     Ok(())
 }
