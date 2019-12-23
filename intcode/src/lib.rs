@@ -5,7 +5,7 @@ pub enum Error {
     UnknownOpcode(i64),
     UnknownMode(u32),
     UnknownModeChar(char),
-    UnexpectedMode(ParamMode)
+    UnexpectedMode(ParamMode),
 }
 
 impl std::fmt::Display for Error {
@@ -16,7 +16,7 @@ impl std::fmt::Display for Error {
             UnknownOpcode(c) => write!(f, "Unknown opcode: {}", c),
             UnknownMode(m) => write!(f, "Unknown mode: {}", m),
             UnknownModeChar(c) => write!(f, "Unknown mode: {}", c),
-            UnexpectedMode(m) => write!(f, "Unexpected mode: {:?}", m)
+            UnexpectedMode(m) => write!(f, "Unexpected mode: {:?}", m),
         }
     }
 }
@@ -34,7 +34,7 @@ pub enum Operator {
     LessThan,
     Equals,
     AdjRelBase,
-    Break
+    Break,
 }
 
 impl TryFrom<i64> for Operator {
@@ -52,7 +52,7 @@ impl TryFrom<i64> for Operator {
             8 => Ok(Operator::Equals),
             9 => Ok(Operator::AdjRelBase),
             99 => Ok(Operator::Break),
-            _ => Err(Error::UnknownOpcode(code))
+            _ => Err(Error::UnknownOpcode(code)),
         }
     }
 }
@@ -61,7 +61,7 @@ impl TryFrom<i64> for Operator {
 pub enum ParamMode {
     Position,
     Immediate,
-    Relative
+    Relative,
 }
 
 impl TryFrom<u32> for ParamMode {
@@ -72,7 +72,7 @@ impl TryFrom<u32> for ParamMode {
             0 => Ok(ParamMode::Position),
             1 => Ok(ParamMode::Immediate),
             2 => Ok(ParamMode::Relative),
-            _ => Err(Error::UnknownMode(mode))
+            _ => Err(Error::UnknownMode(mode)),
         }
     }
 }
@@ -83,7 +83,7 @@ impl TryFrom<char> for ParamMode {
     fn try_from(mode: char) -> Result<Self, Self::Error> {
         match mode.to_digit(10) {
             Some(d) => ParamMode::try_from(d),
-            None => Err(Error::UnknownModeChar(mode))
+            None => Err(Error::UnknownModeChar(mode)),
         }
     }
 }
@@ -93,7 +93,7 @@ pub struct Instruction {
     pub op: Operator,
     pub m1: ParamMode,
     pub m2: ParamMode,
-    pub m3: ParamMode
+    pub m3: ParamMode,
 }
 
 impl Instruction {
@@ -105,7 +105,7 @@ impl Instruction {
             In | Out => 2,
             JumpIfTrue | JumpIfFalse => 3,
             AdjRelBase => 2,
-            Break => 1
+            Break => 1,
         }
     }
 }
@@ -123,7 +123,7 @@ impl TryFrom<i64> for Instruction {
             op: op,
             m1: mode1,
             m2: mode2,
-            m3: mode3
+            m3: mode3,
         })
     }
 }
@@ -133,7 +133,7 @@ pub struct Program {
     pos: usize,
     rel_base: i64,
     done: bool,
-    code: Vec<i64>
+    code: Vec<i64>,
 }
 
 impl Program {
@@ -142,7 +142,7 @@ impl Program {
             pos: 0,
             rel_base: 0,
             code: code.to_vec(),
-            done: false
+            done: false,
         }
     }
 
@@ -163,7 +163,7 @@ impl Program {
         let addr = match mode {
             ParamMode::Position => self.code[pos] as usize,
             ParamMode::Immediate => pos,
-            ParamMode::Relative => (self.code[pos] + self.rel_base) as usize
+            ParamMode::Relative => (self.code[pos] + self.rel_base) as usize,
         };
         if addr >= self.code.len() {
             self.code.resize(addr + 1, 0);
@@ -171,7 +171,10 @@ impl Program {
         addr
     }
 
-    pub fn run_partial<'a>(&mut self, input_iter: &mut dyn FnMut() -> i64) -> Result<Option<i64>, Error> {
+    pub fn run_partial<'a>(
+        &mut self,
+        input_iter: &mut dyn FnMut() -> i64,
+    ) -> Result<Option<i64>, Error> {
         use Operator as Op;
 
         loop {
@@ -184,7 +187,7 @@ impl Program {
                     match inst.op {
                         Op::Add => self.code[dest] = op1 + op2,
                         Op::Mul => self.code[dest] = op1 * op2,
-                        _ => panic!("How did this happen?")
+                        _ => panic!("How did this happen?"),
                     };
                 }
                 Op::In => {
@@ -240,17 +243,36 @@ impl Program {
 
 pub trait Intcode {
     fn run(&mut self, input: &[i64], output: &mut dyn FnMut(i64) -> ()) -> Result<(), Error>;
+    fn run_iter(
+        &mut self,
+        input: &mut dyn FnMut() -> i64,
+        output: &mut dyn FnMut(i64) -> (),
+    ) -> Result<(), Error>;
 }
 
 impl Intcode for &mut [i64] {
     fn run(&mut self, input: &[i64], output: &mut dyn FnMut(i64) -> ()) -> Result<(), Error> {
         let mut input_iter = input.iter();
-        let mut func = move || {
-            *input_iter.next().unwrap()
-        };
+        let mut func = move || *input_iter.next().unwrap();
         let mut prog = Program::new(self);
         while !prog.is_done() {
             if let Some(res) = prog.run_partial(&mut func)? {
+                output(res);
+            }
+        }
+        let l = self.len();
+        self[..].clone_from_slice(&prog.get_code()[..l]);
+        Ok(())
+    }
+
+    fn run_iter(
+        &mut self,
+        input: &mut dyn FnMut() -> i64,
+        output: &mut dyn FnMut(i64) -> (),
+    ) -> Result<(), Error> {
+        let mut prog = Program::new(self);
+        while !prog.is_done() {
+            if let Some(res) = prog.run_partial(input)? {
                 output(res);
             }
         }
@@ -263,13 +285,26 @@ impl Intcode for &mut [i64] {
 impl Intcode for Vec<i64> {
     fn run(&mut self, input: &[i64], output: &mut dyn FnMut(i64) -> ()) -> Result<(), Error> {
         let mut input_iter = input.iter();
-        let mut func = move || {
-            *input_iter.next().unwrap()
-        };
+        let mut func = move || *input_iter.next().unwrap();
         let mut prog = Program::new(self);
         while !prog.is_done() {
             if let Some(res) = prog.run_partial(&mut func)? {
-                // output.push(res);
+                output(res);
+            }
+        }
+        self.clear();
+        self.extend(prog.get_code().iter());
+        Ok(())
+    }
+
+    fn run_iter(
+        &mut self,
+        input: &mut dyn FnMut() -> i64,
+        output: &mut dyn FnMut(i64) -> (),
+    ) -> Result<(), Error> {
+        let mut prog = Program::new(self);
+        while !prog.is_done() {
+            if let Some(res) = prog.run_partial(input)? {
                 output(res);
             }
         }
@@ -288,7 +323,9 @@ mod test {
         let mut code = vec![1, 0, 0, 0, 99];
         let input = [];
         let mut output = Vec::new();
-        code.as_mut_slice().run(&input, &mut |r| output.push(r)).unwrap();
+        code.as_mut_slice()
+            .run(&input, &mut |r| output.push(r))
+            .unwrap();
         assert_eq!(code, vec![2, 0, 0, 0, 99]);
     }
 
@@ -297,7 +334,9 @@ mod test {
         let mut code = vec![2, 3, 0, 3, 99];
         let input = [];
         let mut output = Vec::new();
-        code.as_mut_slice().run(&input, &mut |r| output.push(r)).unwrap();
+        code.as_mut_slice()
+            .run(&input, &mut |r| output.push(r))
+            .unwrap();
         assert_eq!(code, vec![2, 3, 0, 6, 99]);
     }
 
@@ -306,7 +345,9 @@ mod test {
         let mut code = vec![2, 4, 4, 5, 99, 0];
         let input = [];
         let mut output = Vec::new();
-        code.as_mut_slice().run(&input, &mut |r| output.push(r)).unwrap();
+        code.as_mut_slice()
+            .run(&input, &mut |r| output.push(r))
+            .unwrap();
         assert_eq!(code, vec![2, 4, 4, 5, 99, 9801]);
     }
 
@@ -315,8 +356,10 @@ mod test {
         let mut code = vec![1, 1, 1, 4, 99, 5, 6, 0, 99];
         let input = [];
         let mut output = Vec::new();
-        code.as_mut_slice().run(&input, &mut |r| output.push(r)).unwrap();
-        assert_eq!(code,   vec![30, 1, 1, 4, 2, 5, 6, 0, 99]);
+        code.as_mut_slice()
+            .run(&input, &mut |r| output.push(r))
+            .unwrap();
+        assert_eq!(code, vec![30, 1, 1, 4, 2, 5, 6, 0, 99]);
     }
 
     #[test]
@@ -324,106 +367,137 @@ mod test {
         let mut code = vec![3, 0, 4, 0, 99];
         let input = [11];
         let mut output = Vec::new();
-        code.as_mut_slice().run(&input, &mut |r| output.push(r)).unwrap();
+        code.as_mut_slice()
+            .run(&input, &mut |r| output.push(r))
+            .unwrap();
         assert_eq!(output, [11]);
     }
 
     #[test]
     fn test_eq_8_pos() {
-        let mut code = vec![3,9,8,9,10,9,4,9,99,-1,8];
+        let mut code = vec![3, 9, 8, 9, 10, 9, 4, 9, 99, -1, 8];
         let mut input = [8];
         let mut output = Vec::new();
-        code.as_mut_slice().run(&input, &mut |r| output.push(r)).unwrap();
+        code.as_mut_slice()
+            .run(&input, &mut |r| output.push(r))
+            .unwrap();
         assert_eq!(output, [1]);
         output.clear();
         input[0] = 7;
-        code.as_mut_slice().run(&input, &mut |r| output.push(r)).unwrap();
+        code.as_mut_slice()
+            .run(&input, &mut |r| output.push(r))
+            .unwrap();
         assert_eq!(output, [0]);
     }
 
     #[test]
     fn test_lt_8_pos() {
-        let mut code = vec![3,9,7,9,10,9,4,9,99,-1,8];
+        let mut code = vec![3, 9, 7, 9, 10, 9, 4, 9, 99, -1, 8];
         let mut input = [7];
         let mut output = Vec::new();
-        code.as_mut_slice().run(&input, &mut |r| output.push(r)).unwrap();
+        code.as_mut_slice()
+            .run(&input, &mut |r| output.push(r))
+            .unwrap();
         assert_eq!(output, [1]);
-        code = vec![3,9,7,9,10,9,4,9,99,-1,8];
+        code = vec![3, 9, 7, 9, 10, 9, 4, 9, 99, -1, 8];
         output.clear();
         input[0] = 8;
-        code.as_mut_slice().run(&input, &mut |r| output.push(r)).unwrap();
+        code.as_mut_slice()
+            .run(&input, &mut |r| output.push(r))
+            .unwrap();
         assert_eq!(output, [0]);
     }
 
     #[test]
     fn test_eq_8_immediate() {
-        let mut code = vec![3,3,1108,-1,8,3,4,3,99];
+        let mut code = vec![3, 3, 1108, -1, 8, 3, 4, 3, 99];
         let mut input = [8];
         let mut output = Vec::new();
-        code.as_mut_slice().run(&input, &mut |r| output.push(r)).unwrap();
+        code.as_mut_slice()
+            .run(&input, &mut |r| output.push(r))
+            .unwrap();
         assert_eq!(output, [1]);
-        code = vec![3,3,1108,-1,8,3,4,3,99];
+        code = vec![3, 3, 1108, -1, 8, 3, 4, 3, 99];
         output.clear();
         input[0] = 7;
-        code.as_mut_slice().run(&input, &mut |r| output.push(r)).unwrap();
+        code.as_mut_slice()
+            .run(&input, &mut |r| output.push(r))
+            .unwrap();
         assert_eq!(output, [0]);
     }
 
     #[test]
     fn test_lt_8_immediate() {
-        let mut code = vec![3,3,1107,-1,8,3,4,3,99];
+        let mut code = vec![3, 3, 1107, -1, 8, 3, 4, 3, 99];
         let mut input = [7];
         let mut output = Vec::new();
-        code.as_mut_slice().run(&input, &mut |r| output.push(r)).unwrap();
+        code.as_mut_slice()
+            .run(&input, &mut |r| output.push(r))
+            .unwrap();
         assert_eq!(output, [1]);
-        code = vec![3,3,1107,-1,8,3,4,3,99];
+        code = vec![3, 3, 1107, -1, 8, 3, 4, 3, 99];
         output.clear();
         input[0] = 8;
-        code.as_mut_slice().run(&input, &mut |r| output.push(r)).unwrap();
+        code.as_mut_slice()
+            .run(&input, &mut |r| output.push(r))
+            .unwrap();
         assert_eq!(output, [0]);
     }
 
     #[test]
     fn test_jump_pos() {
-        let mut code = vec![3,12,6,12,15,1,13,14,13,4,13,99,-1,0,1,9];
+        let mut code = vec![3, 12, 6, 12, 15, 1, 13, 14, 13, 4, 13, 99, -1, 0, 1, 9];
         let mut input = [0];
         let mut output = Vec::new();
-        code.as_mut_slice().run(&input, &mut |r| output.push(r)).unwrap();
+        code.as_mut_slice()
+            .run(&input, &mut |r| output.push(r))
+            .unwrap();
         assert_eq!(output, [0]);
-        code = vec![3,12,6,12,15,1,13,14,13,4,13,99,-1,0,1,9];
+        code = vec![3, 12, 6, 12, 15, 1, 13, 14, 13, 4, 13, 99, -1, 0, 1, 9];
         output.clear();
         input[0] = 1;
-        code.as_mut_slice().run(&input, &mut |r| output.push(r)).unwrap();
+        code.as_mut_slice()
+            .run(&input, &mut |r| output.push(r))
+            .unwrap();
         assert_eq!(output, [1]);
     }
 
     #[test]
     fn test_jump_imm() {
-        let mut code = vec![3,3,1105,-1,9,1101,0,0,12,4,12,99,1];
+        let mut code = vec![3, 3, 1105, -1, 9, 1101, 0, 0, 12, 4, 12, 99, 1];
         let mut input = [0];
         let mut output = Vec::new();
-        code.as_mut_slice().run(&input, &mut |r| output.push(r)).unwrap();
+        code.as_mut_slice()
+            .run(&input, &mut |r| output.push(r))
+            .unwrap();
         assert_eq!(output, [0]);
 
-        code = vec![3,3,1105,-1,9,1101,0,0,12,4,12,99,1];
+        code = vec![3, 3, 1105, -1, 9, 1101, 0, 0, 12, 4, 12, 99, 1];
         output.clear();
         input[0] = 1;
-        code.as_mut_slice().run(&input, &mut |r| output.push(r)).unwrap();
+        code.as_mut_slice()
+            .run(&input, &mut |r| output.push(r))
+            .unwrap();
         assert_eq!(output, [1]);
     }
 
     #[test]
     fn test_relative_1() {
-        let mut code = vec![109,1,204,-1,1001,100,1,100,1008,100,16,101,1006,101,0,99];
+        let mut code = vec![
+            109, 1, 204, -1, 1001, 100, 1, 100, 1008, 100, 16, 101, 1006, 101, 0, 99,
+        ];
         let input = [];
         let mut output = Vec::new();
         code.run(&input, &mut |r| output.push(r)).unwrap();
-        assert_eq!(output, vec![109,1,204,-1,1001,100,1,100,1008,100,16,101,1006,101,0,99]);
+        assert_eq!(
+            output,
+            vec![109, 1, 204, -1, 1001, 100, 1, 100, 1008, 100, 16, 101, 1006, 101, 0, 99]
+        );
     }
 
     #[test]
     fn test_relative_2() {
-        let mut code = vec![1102,34915192,34915192,7,4,7,99,0];
+        let mut code = vec![1102, 34915192, 34915192, 7, 4, 7, 99, 0];
         let input = [];
         let mut output = Vec::new();
         code.run(&input, &mut |r| output.push(r)).unwrap();
@@ -432,7 +506,7 @@ mod test {
 
     #[test]
     fn test_relative_3() {
-        let mut code = vec![104,1125899906842624,99];
+        let mut code = vec![104, 1125899906842624, 99];
         let input = [];
         let mut output = Vec::new();
         code.run(&input, &mut |r| output.push(r)).unwrap();
